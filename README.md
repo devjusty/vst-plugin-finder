@@ -9,6 +9,27 @@ This repository contains Windows scripts for discovering installed VST plugins a
 - Optionally uses the OpenAI API to add plugin type, developer, and notes to the CSV.
 - Supports resumable, batched enrichment with progress files.
 
+## Searched Directories
+
+The scanner automatically looks in the following standard and DAW-specific locations:
+
+**64-bit & 32-bit System Paths**
+- `%ProgramFiles%\VSTPlugins`
+- `%ProgramFiles%\Steinberg\VSTPlugins`
+- `%ProgramFiles%\Common Files\VST2` (and `VST3`)
+- `%ProgramFiles%\Common Files\Steinberg\VST2` (and `VST3`)
+- *...and their corresponding `%ProgramFiles(x86)%` 32-bit variants.*
+
+**DAW-specific Paths**
+- **FL Studio:** `%ProgramFiles%\Image-Line\FL Studio\Plugins\VST` (and `VST3`)
+- **Studio One:** `%ProgramFiles%\PreSonus\Studio One\VST` (and `VST3`)
+- **Ableton Live:** `%ProgramFiles%\Ableton\Live\Plugins\VST2` (and `VST3`)
+
+**User-specific Paths**
+- `%USERPROFILE%\Documents\VST` (and `VST3`)
+- `%USERPROFILE%\Documents\Audio\Plugins\VST` (and `VST3`)
+- `%APPDATA%\VST` (and `VST3`)
+
 ## Requirements
 
 - Windows PowerShell
@@ -31,21 +52,30 @@ Set `OPENAI_API_KEY` in `.env`. The file is ignored by Git and must never be com
 
 ## Usage
 
-Scan the computer for installed plugins:
+### 1. Scan for Plugins
+
+Run the PowerShell scanner to find your installed plugins. This script requires no arguments and outputs a summary to the console.
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\Find-VSTPlugins.ps1
 ```
 
-The scanner writes `VST_Plugins_List.csv` to the current user's Desktop.
+**Expected Output:**
+- A console summary of discovered VST2 and VST3 plugins.
+- A CSV file written to your Desktop: `~\Desktop\VST_Plugins_List.csv`.
 
-For recommended resumable enrichment, run:
+### 2. Enrich Plugin Data
+
+To add metadata (such as developer, exact plugin type, and notes) using OpenAI, run the resumable Python enrichment script:
 
 ```powershell
 uv run --with pandas --with openai --with python-dotenv .\UpdatePluginsCSV.py
 ```
 
-This reads `VST_Plugins_List.csv`, saves item-level progress to `VST_Plugins_List_Progress.csv`, and writes the completed data to `VST_Plugins_List_Enriched.csv`.
+**Expected Output:**
+- Progress is logged to the console.
+- `VST_Plugins_List_Progress.csv` is updated iteratively, meaning you can safely cancel and resume.
+- Once complete, the final data is saved to `VST_Plugins_List_Enriched.csv`.
 
 `UpdatePlugins.py` is an older, non-resumable enrichment script. Use it only when its one-pass behavior is intentional.
 
