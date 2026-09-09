@@ -83,12 +83,18 @@ To add metadata (such as developer, exact plugin type, and notes) using OpenAI, 
 uv run --with pandas --with openai --with python-dotenv .\UpdatePluginsCSV.py
 ```
 
+**Optional Parameters:**
+- `--input <file>`: Override the default input file (default: `VST_Plugins_List.csv`)
+- `--output <file>`: Override the default output file (default: `VST_Plugins_List_Enriched.csv`)
+- `--limit <int>`: Only process a certain number of plugins before stopping.
+- `--batch-size <int>`: How many plugins to process before pausing (default: 5).
+- `--delay <float>`: Seconds to wait between API requests (default: 20.0).
+- `--retries <int>`: Max retry attempts for API rate limits (default: 5).
+
 **Expected Output:**
 - Progress is logged to the console.
-- `VST_Plugins_List_Progress.csv` is updated iteratively, meaning you can safely cancel and resume.
-- Once complete, the final data is saved to `VST_Plugins_List_Enriched.csv`.
-
-`UpdatePlugins.py` is an older, non-resumable enrichment script. Use it only when its one-pass behavior is intentional.
+- A progress file (e.g., `VST_Plugins_List_Progress.csv`) is updated iteratively, meaning you can safely cancel and resume.
+- Once complete, the final data is saved to `VST_Plugins_List_Enriched.csv` (or your chosen `--output`).
 
 ## Security
 
