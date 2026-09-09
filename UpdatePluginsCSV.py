@@ -1,9 +1,11 @@
 import pandas as pd
 import time
 import random
+from dotenv import load_dotenv
 from openai import OpenAI
 from openai import RateLimitError
 
+load_dotenv()
 client = OpenAI()
 
 # 2. Load CSV
