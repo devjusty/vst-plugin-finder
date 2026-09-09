@@ -80,7 +80,7 @@ powershell -ExecutionPolicy Bypass -File .\Find-VSTPlugins.ps1 -CustomPaths "D:\
 To add metadata (such as developer, exact plugin type, and notes) using OpenAI, run the resumable Python enrichment script:
 
 ```powershell
-uv run --with pandas --with openai --with python-dotenv .\UpdatePluginsCSV.py
+uv run .\UpdatePluginsCSV.py
 ```
 
 **Optional Parameters:**
@@ -90,10 +90,12 @@ uv run --with pandas --with openai --with python-dotenv .\UpdatePluginsCSV.py
 - `--batch-size <int>`: How many plugins to process before pausing (default: 5).
 - `--delay <float>`: Seconds to wait between API requests (default: 20.0).
 - `--retries <int>`: Max retry attempts for API rate limits (default: 5).
+- `--cache <file>`: Path to the JSON cache file (default: `plugin_cache.json`).
 
 **Expected Output:**
 - Progress is logged to the console.
 - A progress file (e.g., `VST_Plugins_List_Progress.csv`) is updated iteratively, meaning you can safely cancel and resume.
+- A local cache file (`plugin_cache.json`) is maintained to prevent redundant API calls for previously enriched plugins.
 - Once complete, the final data is saved to `VST_Plugins_List_Enriched.csv` (or your chosen `--output`).
 
 ## Security

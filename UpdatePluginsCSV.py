@@ -4,6 +4,7 @@ import random
 import os
 import argparse
 import sys
+import json
 from dotenv import load_dotenv
 from openai import OpenAI
 from openai import RateLimitError
@@ -16,6 +17,7 @@ def main():
     parser.add_argument("--batch-size", type=int, default=5, help="Number of plugins to process before pausing (default: 5)")
     parser.add_argument("--delay", type=float, default=20.0, help="Seconds to wait between individual requests (default: 20)")
     parser.add_argument("--retries", type=int, default=5, help="Max retry attempts for API rate limits (default: 5)")
+    parser.add_argument("--cache", default="plugin_cache.json", help="Path to the JSON cache file (default: plugin_cache.json)")
     args = parser.parse_args()
 
     load_dotenv()
@@ -31,6 +33,20 @@ def main():
     # Determine progress file name based on input
     input_base = os.path.splitext(args.input)[0]
     progress_file = f"{input_base}_Progress.csv"
+
+    # Load cache
+    cache = {}
+    if os.path.exists(args.cache):
+        try:
+            with open(args.cache, "r", encoding="utf-8") as f:
+                cache = json.load(f)
+            print(f"Loaded cache with {len(cache)} entries.")
+        except json.JSONDecodeError:
+            print(f"Warning: Cache file '{args.cache}' is invalid JSON. Starting fresh cache.")
+
+    def save_cache():
+        with open(args.cache, "w", encoding="utf-8") as f:
+            json.dump(cache, f, indent=2, ensure_ascii=False)
 
     # Load CSV
     try:
@@ -74,19 +90,19 @@ def main():
                 - Developer or Producer
                 - Additional notes (brief)
                 If uncertain, respond with "Unknown" for that field.
-                Return your answer in the format:
-                Type: <value>
-                Developer: <value>
-                Notes: <value>
+                
+                You must return your answer as a JSON object with exactly these three keys:
+                "Plugin Type", "Developer/Producer", and "Notes".
                 """
                 
                 response = client.chat.completions.create(
                     model="gpt-3.5-turbo",
                     messages=[
                         {"role": "system", 
-                         "content": "You are a helpful assistant specialized in VST plugin details."},
+                         "content": "You are a helpful assistant specialized in VST plugin details. Output valid JSON only."},
                         {"role": "user", "content": prompt}
                     ],
+                    response_format={"type": "json_object"},
                     max_tokens=150,
                     temperature=0.2
                 )
@@ -96,7 +112,7 @@ def main():
             except RateLimitError:
                 if retries >= args.retries:
                     print(f"Max retries reached for '{plugin_name}'. Giving up after {retries} attempts.")
-                    return "Type: Unknown\nDeveloper: Unknown\nNotes: Rate Limit Error"
+                    return json.dumps({"Plugin Type": "Unknown", "Developer/Producer": "Unknown", "Notes": "Rate Limit Error"})
                 
                 wait_time = base_wait_time * (2 ** retries) + random.uniform(0, 1)
                 print(f"Rate limit hit for '{plugin_name}'. Retry {retries+1}/{args.retries} after {wait_time:.2f} seconds")
@@ -105,7 +121,7 @@ def main():
                 
             except Exception as e:
                 print(f"Error querying API for '{plugin_name}': {e}")
-                return f"Type: Unknown\nDeveloper: Unknown\nNotes: API Error: {str(e)[:100]}"
+                return json.dumps({"Plugin Type": "Unknown", "Developer/Producer": "Unknown", "Notes": f"API Error: {str(e)[:100]}"})
 
     def parse_chatgpt_response(response_text):
         details = {
@@ -115,15 +131,12 @@ def main():
         }
         
         try:
-            for line in response_text.splitlines():
-                if line.lower().startswith("type:"):
-                    details["Plugin Type"] = line.split(":", 1)[1].strip()
-                elif line.lower().startswith("developer:"):
-                    details["Developer/Producer"] = line.split(":", 1)[1].strip()
-                elif line.lower().startswith("notes:"):
-                    details["Notes"] = line.split(":", 1)[1].strip()
-        except Exception as e:
-            print(f"Error parsing response: {e}")
+            parsed = json.loads(response_text)
+            details["Plugin Type"] = parsed.get("Plugin Type", "Unknown")
+            details["Developer/Producer"] = parsed.get("Developer/Producer", "Unknown")
+            details["Notes"] = parsed.get("Notes", "Unknown")
+        except json.JSONDecodeError as e:
+            print(f"Error parsing JSON response: {e}")
             print(f"Response was: {response_text}")
         
         return details
@@ -135,27 +148,44 @@ def main():
             
         for idx in range(start_idx, end_idx):
             row = df.iloc[idx]
-            plugin_name = row["Name"]
+            plugin_name = row.get("Name", "Unknown")
+            size_bytes = row.get("SizeBytes", "0")
+            last_write = row.get("LastWriteTime", "Unknown")
+            
+            cache_key = f"{plugin_name}_{size_bytes}_{last_write}"
+            
             print(f"Processing {idx+1}/{len(df)}: {plugin_name}")
             
-            # Skip if already processed (for resuming)
+            # Skip if already processed in CSV (for resuming without cache)
             if df.at[idx, "Plugin Type"] != "Placeholder" and df.at[idx, "Developer/Producer"] != "Placeholder":
-                print(f"Skipping already processed plugin: {plugin_name}")
+                print(f"Skipping already processed plugin in CSV: {plugin_name}")
                 continue
+                
+            # Check cache
+            if cache_key in cache:
+                print(f"Using cached data for: {plugin_name}")
+                parsed = cache[cache_key]
+                time_to_wait = 0
+            else:
+                chatgpt_reply = get_plugin_details_from_chatgpt(plugin_name)
+                parsed = parse_chatgpt_response(chatgpt_reply)
+                
+                # Update cache
+                cache[cache_key] = parsed
+                save_cache()
+                
+                # Wait between requests to avoid hitting rate limits
+                time_to_wait = args.delay
             
-            chatgpt_reply = get_plugin_details_from_chatgpt(plugin_name)
-            parsed = parse_chatgpt_response(chatgpt_reply)
-            
-            df.at[idx, "Plugin Type"] = parsed["Plugin Type"]
-            df.at[idx, "Developer/Producer"] = parsed["Developer/Producer"]
-            df.at[idx, "Notes"] = parsed["Notes"]
+            df.at[idx, "Plugin Type"] = parsed.get("Plugin Type", "Unknown")
+            df.at[idx, "Developer/Producer"] = parsed.get("Developer/Producer", "Unknown")
+            df.at[idx, "Notes"] = parsed.get("Notes", "Unknown")
             
             # Save progress for each item to avoid data loss
             df.to_csv(progress_file, index=False)
             
-            # Wait between requests to avoid hitting rate limits
-            if idx < end_idx - 1 or (end_idx < len(df) and (not args.limit or end_idx < args.limit)):
-                time.sleep(args.delay)
+            if time_to_wait > 0 and (idx < end_idx - 1 or (end_idx < len(df) and (not args.limit or end_idx < args.limit))):
+                time.sleep(time_to_wait)
 
     total_to_process = len(df)
     if args.limit and args.limit < total_to_process:
