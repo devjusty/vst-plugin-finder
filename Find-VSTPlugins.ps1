@@ -1,8 +1,36 @@
-# Script to find all VST and VST3 plugins on a Windows machine
-# Save this as Find-VSTPlugins.ps1
+<#
+.SYNOPSIS
+Finds all VST and VST3 plugins on a Windows machine.
+
+.DESCRIPTION
+Scans standard system directories, DAW directories, user directories, and optionally custom paths to discover VST2 (.dll) and VST3 (.vst3) plugins. Exports the results to a CSV file.
+
+.PARAMETER CustomPaths
+Additional directories to search for plugins.
+
+.PARAMETER CustomPathsOnly
+If specified, only the CustomPaths will be searched. Standard system directories will be skipped.
+
+.PARAMETER OutputPath
+The file path where the CSV results will be saved. Defaults to a file on the user's desktop.
+
+.PARAMETER SkipVST2
+If specified, the scanner will not look for VST2 (.dll) plugins.
+
+.PARAMETER SkipVST3
+If specified, the scanner will not look for VST3 (.vst3) plugins.
+#>
+[CmdletBinding()]
+param (
+    [string[]]$CustomPaths = @(),
+    [switch]$CustomPathsOnly,
+    [string]$OutputPath = "$env:USERPROFILE\Desktop\VST_Plugins_List.csv",
+    [switch]$SkipVST2,
+    [switch]$SkipVST3
+)
 
 # Common VST installation paths to search
-$searchPaths = @(
+$defaultSearchPaths = @(
     # Common 64-bit VST paths
     "$env:ProgramFiles\VSTPlugins",
     "$env:ProgramFiles\Steinberg\VSTPlugins",
@@ -23,11 +51,8 @@ $searchPaths = @(
     "$env:ProgramFiles\PreSonus\Studio One\VST",
     "$env:ProgramFiles\PreSonus\Studio One\VST3",
     "$env:ProgramFiles\Ableton\Live\Plugins\VST2",
-    "$env:ProgramFiles\Ableton\Live\Plugins\VST3"
-)
-
-# Add user-specific paths that might contain VST plugins
-$userPaths = @(
+    "$env:ProgramFiles\Ableton\Live\Plugins\VST3",
+    # User-specific paths
     "$env:USERPROFILE\Documents\VST",
     "$env:USERPROFILE\Documents\VST3",
     "$env:USERPROFILE\Documents\Audio\Plugins\VST",
@@ -36,49 +61,87 @@ $userPaths = @(
     "$env:APPDATA\VST3"
 )
 
-$searchPaths += $userPaths
+$searchPaths = @()
+if (-not $CustomPathsOnly) {
+    $searchPaths += $defaultSearchPaths
+}
+if ($CustomPaths) {
+    $searchPaths += $CustomPaths
+}
 
-# File extensions to search for
 $vstExtensions = @("*.dll")
 $vst3Extensions = @("*.vst3")
 
-# Create an array to store results
 $results = @()
+$seenPaths = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
 
-# Function to check if a file is likely a VST plugin
 function Test-VSTPlugin {
     param (
         [string]$FilePath
     )
     
     # Simple heuristic: Check file size (most VST plugins are at least 100KB)
-    $fileInfo = Get-Item $FilePath
-    return $fileInfo.Length -gt 102400
+    try {
+        $fileInfo = Get-Item -LiteralPath $FilePath -ErrorAction Stop
+        return $fileInfo.Length -gt 102400
+    } catch {
+        return $false
+    }
 }
+
+$scanDateStr = (Get-Date).ToString("o")
 
 # Search for VST and VST3 plugins in all paths
 foreach ($path in $searchPaths) {
-    if (Test-Path $path) {
+    if (Test-Path -LiteralPath $path) {
+        
         # Find VST plugins
-        $vstPlugins = Get-ChildItem -Path $path -Include $vstExtensions -Recurse -ErrorAction SilentlyContinue | 
-                      Where-Object { Test-VSTPlugin $_.FullName }
-        foreach ($plugin in $vstPlugins) {
-            $results += [PSCustomObject]@{
-                Type = "VST"
-                Name = $plugin.Name
-                Path = $plugin.DirectoryName
-                Size = "{0:N2} MB" -f ($plugin.Length / 1MB)
+        if (-not $SkipVST2) {
+            $scanErrors = $null
+            $vstPlugins = Get-ChildItem -LiteralPath $path -Include $vstExtensions -Recurse -ErrorAction SilentlyContinue -ErrorVariable scanErrors | 
+                          Where-Object { -not $_.PSIsContainer }
+            
+            if ($scanErrors) {
+                Write-Warning "Encountered $($scanErrors.Count) access or read error(s) while scanning VST2 in $path"
+            }
+
+            foreach ($plugin in $vstPlugins) {
+                if ($seenPaths.Add($plugin.FullName)) {
+                    if (Test-VSTPlugin -FilePath $plugin.FullName) {
+                        $results += [PSCustomObject]@{
+                            Type = "VST"
+                            Name = $plugin.Name
+                            Path = $plugin.DirectoryName
+                            SizeBytes = $plugin.Length
+                            LastWriteTime = $plugin.LastWriteTime.ToString("o")
+                            ScanDate = $scanDateStr
+                        }
+                    }
+                }
             }
         }
         
         # Find VST3 plugins
-        $vst3Plugins = Get-ChildItem -Path $path -Include $vst3Extensions -Recurse -ErrorAction SilentlyContinue
-        foreach ($plugin in $vst3Plugins) {
-            $results += [PSCustomObject]@{
-                Type = "VST3"
-                Name = $plugin.Name
-                Path = $plugin.DirectoryName
-                Size = "{0:N2} MB" -f ($plugin.Length / 1MB)
+        if (-not $SkipVST3) {
+            $scanErrors3 = $null
+            $vst3Plugins = Get-ChildItem -LiteralPath $path -Include $vst3Extensions -Recurse -ErrorAction SilentlyContinue -ErrorVariable scanErrors3 |
+                           Where-Object { -not $_.PSIsContainer }
+            
+            if ($scanErrors3) {
+                Write-Warning "Encountered $($scanErrors3.Count) access or read error(s) while scanning VST3 in $path"
+            }
+            
+            foreach ($plugin in $vst3Plugins) {
+                if ($seenPaths.Add($plugin.FullName)) {
+                    $results += [PSCustomObject]@{
+                        Type = "VST3"
+                        Name = $plugin.Name
+                        Path = $plugin.DirectoryName
+                        SizeBytes = $plugin.Length
+                        LastWriteTime = $plugin.LastWriteTime.ToString("o")
+                        ScanDate = $scanDateStr
+                    }
+                }
             }
         }
     }
@@ -92,8 +155,8 @@ if ($results.Count -eq 0) {
     Write-Output ""
     
     # Group by plugin type
-    $vstCount = ($results | Where-Object { $_.Type -eq "VST" }).Count
-    $vst3Count = ($results | Where-Object { $_.Type -eq "VST3" }).Count
+    $vstCount = @($results | Where-Object { $_.Type -eq "VST" }).Count
+    $vst3Count = @($results | Where-Object { $_.Type -eq "VST3" }).Count
     
     Write-Output "Summary:"
     Write-Output "- VST Plugins: $vstCount"
@@ -102,10 +165,9 @@ if ($results.Count -eq 0) {
     Write-Output ""
     
     # Output formatted table
-    $results | Sort-Object Type, Name | Format-Table -AutoSize
+    $results | Sort-Object Type, Name | Format-Table Type, Name, Path, SizeBytes -AutoSize
     
-    # Export to CSV file in the current user's desktop
-    $csvPath = "$env:USERPROFILE\Desktop\VST_Plugins_List.csv"
-    $results | Export-Csv -Path $csvPath -NoTypeInformation
-    Write-Output "Plugin list exported to: $csvPath"
+    # Export to CSV file with UTF8 encoding
+    $results | Export-Csv -Path $OutputPath -NoTypeInformation -Encoding UTF8
+    Write-Output "Plugin list exported to: $OutputPath"
 }

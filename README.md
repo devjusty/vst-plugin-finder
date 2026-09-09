@@ -54,15 +54,26 @@ Set `OPENAI_API_KEY` in `.env`. The file is ignored by Git and must never be com
 
 ### 1. Scan for Plugins
 
-Run the PowerShell scanner to find your installed plugins. This script requires no arguments and outputs a summary to the console.
+Run the PowerShell scanner to find your installed plugins. By default, it searches standard system and DAW directories and outputs a summary to the console.
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\Find-VSTPlugins.ps1
 ```
 
+**Optional Parameters:**
+- `-CustomPaths "C:\Path1", "D:\Path2"`: Add specific folders to the search.
+- `-CustomPathsOnly`: Skip standard system directories and ONLY search your custom paths.
+- `-OutputPath ".\MyPlugins.csv"`: Override the default save location.
+- `-SkipVST2` / `-SkipVST3`: Skip scanning for a specific plugin format.
+
+**Example with custom paths:**
+```powershell
+powershell -ExecutionPolicy Bypass -File .\Find-VSTPlugins.ps1 -CustomPaths "D:\MyVSTs" -CustomPathsOnly
+```
+
 **Expected Output:**
 - A console summary of discovered VST2 and VST3 plugins.
-- A CSV file written to your Desktop: `~\Desktop\VST_Plugins_List.csv`.
+- A CSV file written to your Desktop: `~\Desktop\VST_Plugins_List.csv` (unless `-OutputPath` is specified).
 
 ### 2. Enrich Plugin Data
 
